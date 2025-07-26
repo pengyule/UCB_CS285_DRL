@@ -59,8 +59,9 @@ class MLPPolicy(nn.Module):
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         """Takes a single observation (as a numpy array) and returns a single action (as a numpy array)."""
         # TODO: implement get_action
-        action = None
-
+        dist = self.forward(ptu.from_numpy(obs))
+        action = ptu.to_numpy(dist.sample())
+        
         return action
 
     def forward(self, obs: torch.FloatTensor):
@@ -71,13 +72,17 @@ class MLPPolicy(nn.Module):
         """
         if self.discrete:
             # TODO: define the forward pass for a policy with a discrete action space.
-            pass
+            logits = self.logits_net(obs)
+            dist = distributions.Categorical(logits=logits)
         else:
             # TODO: define the forward pass for a policy with a continuous action space.
-            pass
-        return None
+            mean = self.mean_net(obs)
+            std = torch.exp(self.logstd)
+            dist = distributions.Normal(mean, std)
+            
+        return dist
 
-    def update(self, obs: np.ndarray, actions: np.ndarray, *args, **kwargs) -> dict:
+    def update(self, obs: np.ndarray, actions: np.ndarray, terminals: np.ndarray, *args, **kwargs) -> dict:
         """Performs one iteration of gradient descent on the provided batch of data."""
         raise NotImplementedError
 
@@ -89,15 +94,28 @@ class MLPPolicyPG(MLPPolicy):
         self,
         obs: np.ndarray,
         actions: np.ndarray,
+        terminals: np.ndarray,
         advantages: np.ndarray,
     ) -> dict:
         """Implements the policy gradient actor update."""
+        cnt_traj = terminals.sum()
         obs = ptu.from_numpy(obs)
         actions = ptu.from_numpy(actions)
         advantages = ptu.from_numpy(advantages)
-
+        # how can we calculate J(theta) without knowing the number of trajectories?
+        # in fact, we can calculate the log probabilities of the actions given the observations,
+        # and then use the advantages to calculate the loss. But that only gives the sum over all the trajectories.
+        # we need to average the loss over ____? the number of samples, or the number of trajectories?
+        # in fact,
         # TODO: implement the policy gradient actor update.
-        loss = None
+        log_prob_sample = self.forward(obs).log_prob(actions)
+        if not self.discrete:
+            log_prob_sample = log_prob_sample.sum(dim=-1)
+        loss = -(log_prob_sample * advantages).sum() / cnt_traj #.mean() 
+        
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
         return {
             "Actor Loss": ptu.to_numpy(loss),
